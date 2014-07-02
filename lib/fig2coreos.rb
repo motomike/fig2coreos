@@ -17,12 +17,12 @@ class Fig2CoreOS
     FileUtils.rm_rf(File.join(@output_dir, "media"))
     FileUtils.rm_rf(File.join(@output_dir, "setup-coreos.sh"))
     FileUtils.rm_rf(File.join(@output_dir, "Vagrantfile"))
-    
+
     if @vagrant
         FileUtils.mkdir_p(File.join(@output_dir, "media", "state", "units"))
         create_vagrant_file
     end
-    
+
     create_service_files
     exit 0
   end
@@ -30,6 +30,7 @@ class Fig2CoreOS
   def create_service_files
   	@fig.each do |service_name, service|
       image = service["image"]
+      instance_count = service["instance_count"] || 1
       ports = (service["ports"] || []).map{|port| "-p #{port}"}
       volumes = (service["volumes"] || []).map{|volume| "-v #{volume}"}
       links = (service["links"] || []).map{|link| "--link #{link}_1:#{link}_1"}
@@ -49,10 +50,12 @@ class Fig2CoreOS
         base_path = @output_dir
       end
 
-  		File.open(File.join(base_path, "#{service_name}.1.service") , "w") do |file|
-        file << <<-eof
+      instance_count.times do |count|
+        instance_num = count + 1
+    		File.open(File.join(base_path, "#{service_name}.#{instance_num}.service") , "w") do |file|
+          file << <<-eof
 [Unit]
-Description=Run #{service_name}_1
+Description=Run #{service_name}_#{instance_num}
 After=#{after}.service
 Requires=#{after}.service
 
@@ -60,30 +63,31 @@ Requires=#{after}.service
 Restart=always
 RestartSec=10s
 ExecStartPre=/usr/bin/docker ps -a -q | xargs docker rm
-ExecStart=/usr/bin/docker run -rm -name #{service_name}_1 #{volumes.join(" ")} #{links.join(" ")} #{envs.join(" ")} #{ports.join(" ")} #{image}
+ExecStart=/usr/bin/docker run -rm -name #{service_name}_#{instance_num} #{volumes.join(" ")} #{links.join(" ")} #{envs.join(" ")} #{ports.join(" ")} #{image}
 ExecStartPost=/usr/bin/docker ps -a -q | xargs docker rm
-ExecStop=/usr/bin/docker kill #{service_name}_1
+ExecStop=/usr/bin/docker kill #{service_name}_#{instance_num}
 ExecStopPost=/usr/bin/docker ps -a -q | xargs docker rm
 
 [Install]
 WantedBy=local.target
 eof
-  		end
+    		end
 
-      File.open(File.join(base_path, "#{service_name}-discovery.1.service"), "w") do |file|
-        port = %{\\"port\\": #{service["ports"].first.to_s.split(":").first}, } if service["ports"].to_a.size > 0
-        file << <<-eof
+        File.open(File.join(base_path, "#{service_name}-discovery.#{instance_num}.service"), "w") do |file|
+          port = %{\\"port\\": #{service["ports"].first.to_s.split(":").first}, } if service["ports"].to_a.size > 0
+          file << <<-eof
 [Unit]
-Description=Announce #{service_name}_1
-BindsTo=#{service_name}.1.service
+Description=Announce #{service_name}_#{instance_num}
+BindsTo=#{service_name}.#{instance_num}.service
 
 [Service]
-ExecStart=/bin/sh -c "while true; do etcdctl set /services/#{service_name}/#{service_name}_1 '{ \\"host\\": \\"%H\\", #{port}\\"version\\": \\"52c7248a14\\" }' --ttl 60;sleep 45;done"
-ExecStop=/usr/bin/etcdctl rm /services/#{service_name}/#{service_name}_1
+ExecStart=/bin/sh -c "while true; do etcdctl set /services/#{service_name}/#{service_name}_#{instance_num} '{ \\"host\\": \\"%H\\", #{port}\\"version\\": \\"52c7248a14\\" }' --ttl 60;sleep 45;done"
+ExecStop=/usr/bin/etcdctl rm /services/#{service_name}/#{service_name}_#{instance_num}
 
 [X-Fleet]
-X-ConditionMachineOf=#{service_name}.1.service
+X-ConditionMachineOf=#{service_name}.#{instance_num}.service
 eof
+        end
       end
     end
   end
