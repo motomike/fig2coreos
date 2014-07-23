@@ -70,6 +70,9 @@ ExecStopPost=/usr/bin/docker ps -a -q | xargs docker rm
 
 [Install]
 WantedBy=local.target
+
+[X-Fleet]
+X-Conflicts=#{service_name}.*.service
 eof
     		end
 
